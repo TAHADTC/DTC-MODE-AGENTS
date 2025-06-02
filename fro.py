@@ -522,12 +522,6 @@ def master_mode():
             st.warning('Please upload files and enter a valid email address.')
             return
 
-        # Check total size limit (e.g., 10 MB)
-        total_size = sum(f.size for f in uploads)
-        if total_size > 10 * 1024 * 1024:  # Example: 10 MB limit
-            st.error("The total size of uploaded files exceeds the 10 MB limit.")
-            return
-
         with st.spinner("Sending files to n8n webhook..."):
             try:
                 # Prepare the file payload
@@ -543,7 +537,7 @@ def master_mode():
                 }
 
                 # Send the files to the n8n webhook
-                resp = requests.post(MASTER_WEBHOOK_URL, files=files_payload, data=data, timeout=60)
+                resp = requests.post(MASTER_WEBHOOK_URL, files=files_payload, data=data, timeout=30)
 
                 # Handle the response
                 if resp.ok:
