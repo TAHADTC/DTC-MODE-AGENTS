@@ -54,12 +54,13 @@ CONTENT_FUNNEL_WEBHOOK_URL = os.getenv('CONTENT_FUNNEL_WEBHOOK_URL')
 CONVERSION_PATHWAY_WEBHOOK_URL = os.getenv('CONVERSION_PATHWAY_WEBHOOK_URL')
 RETENTION_AFFINITY_WEBHOOK_URL = os.getenv('RETENTION_AFFINITY_WEBHOOK_URL')
 STRATEGY_WEBHOOK_URL = os.getenv('STRATEGY_WEBHOOK_URL')
+MASTER_WEBHOOK_URL = os.getenv('MASTER_WEBHOOK_URL')
 
 # -----------------------------
 # Sidebar Navigation
 # -----------------------------
 st.sidebar.markdown('<div class="sidebar-header">🤖 DTCMODE BOT-ASSISTANT</div>', unsafe_allow_html=True)
-for tab in ['Miro Sticky Notes', "ICP's", 'Agent 2', 'Content Funnel Section', 'Conversion Pathway Strategy Framework', 'Retention + Affinity Generator', 'Strategy']:
+for tab in ['Miro Sticky Notes', "ICP's", 'Agent 2', 'Content Funnel Section', 'Conversion Pathway Strategy Framework', 'Retention + Affinity Generator', 'Strategy', 'Master']:
     if st.sidebar.button(tab):
         st.session_state.active_tab = tab
 
@@ -309,6 +310,12 @@ def content_funnel_mode():
             st.warning('Please upload files and enter a valid email address.')
             return
 
+        # Check total size limit (e.g., 10 MB)
+        total_size = sum(f.size for f in uploads)
+        if total_size > 10 * 1024 * 1024:  # Example: 10 MB limit
+            st.error("The total size of uploaded files exceeds the 10 MB limit.")
+            return
+
         with st.spinner("Sending files to n8n webhook..."):
             try:
                 # Prepare the file payload
@@ -354,6 +361,12 @@ def conversion_pathway_mode():
     if st.button('Send to n8n Webhook'):
         if not uploads or not email.strip():
             st.warning('Please upload files and enter a valid email address.')
+            return
+
+        # Check total size limit (e.g., 10 MB)
+        total_size = sum(f.size for f in uploads)
+        if total_size > 10 * 1024 * 1024:  # Example: 10 MB limit
+            st.error("The total size of uploaded files exceeds the 10 MB limit.")
             return
 
         with st.spinner("Sending files to n8n webhook..."):
@@ -403,6 +416,12 @@ def retention_affinity_mode():
             st.warning('Please upload files and enter a valid email address.')
             return
 
+        # Check total size limit (e.g., 10 MB)
+        total_size = sum(f.size for f in uploads)
+        if total_size > 10 * 1024 * 1024:  # Example: 10 MB limit
+            st.error("The total size of uploaded files exceeds the 10 MB limit.")
+            return
+
         with st.spinner("Sending files to n8n webhook..."):
             try:
                 # Prepare the file payload
@@ -450,6 +469,12 @@ def strategy_mode():
             st.warning('Please upload files and enter a valid email address.')
             return
 
+        # Check total size limit (e.g., 10 MB)
+        total_size = sum(f.size for f in uploads)
+        if total_size > 10 * 1024 * 1024:  # Example: 10 MB limit
+            st.error("The total size of uploaded files exceeds the 10 MB limit.")
+            return
+
         with st.spinner("Sending files to n8n webhook..."):
             try:
                 # Prepare the file payload
@@ -476,6 +501,59 @@ def strategy_mode():
                 st.error(f"❌ Error sending files to n8n webhook: {e}")
 
 # -----------------------------
+# Master Page
+# -----------------------------
+def master_mode():
+    st.header("Master File Upload")
+
+    # Email input field
+    email = st.text_input('Enter your email address', placeholder='e.g., user@example.com')
+
+    # File uploader for PDF and TXT documents
+    uploads = st.file_uploader(
+        'Upload files (PDF and TXT only)', 
+        type=['pdf', 'txt'], 
+        accept_multiple_files=True
+    )
+
+    # Button to send the files to the n8n webhook
+    if st.button('Send to n8n Webhook'):
+        if not uploads or not email.strip():
+            st.warning('Please upload files and enter a valid email address.')
+            return
+
+        # Check total size limit (e.g., 10 MB)
+        total_size = sum(f.size for f in uploads)
+        if total_size > 10 * 1024 * 1024:  # Example: 10 MB limit
+            st.error("The total size of uploaded files exceeds the 10 MB limit.")
+            return
+
+        with st.spinner("Sending files to n8n webhook..."):
+            try:
+                # Prepare the file payload
+                files_payload = []
+                for f in uploads:
+                    data = f.read()
+                    file_type = 'application/pdf' if f.name.endswith('.pdf') else 'text/plain'
+                    files_payload.append(('files', (f.name, data, file_type)))
+
+                # Prepare additional data
+                data = {
+                    'email': email  # Include the email in the payload
+                }
+
+                # Send the files to the n8n webhook
+                resp = requests.post(MASTER_WEBHOOK_URL, files=files_payload, data=data, timeout=60)
+
+                # Handle the response
+                if resp.ok:
+                    st.success("🎉 Files sent to n8n webhook successfully!")
+                else:
+                    st.error(f"❌ n8n webhook returned {resp.status_code}: {resp.text}")
+            except Exception as e:
+                st.error(f"❌ Error sending files to n8n webhook: {e}")
+
+# -----------------------------
 # Main Dispatcher
 # -----------------------------
 if st.session_state.active_tab == 'Miro Sticky Notes':
@@ -490,5 +568,7 @@ elif st.session_state.active_tab == "Retention + Affinity Generator":
     retention_affinity_mode()
 elif st.session_state.active_tab == "Strategy":
     strategy_mode()
+elif st.session_state.active_tab == "Master":
+    master_mode()
 else:
     agent2_mode()
