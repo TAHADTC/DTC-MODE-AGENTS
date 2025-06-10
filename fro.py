@@ -291,7 +291,26 @@ def agent2_mode():
                         st.error(f"Server returned error {resp.status_code}: {resp.text}")
                         return
                     
-                    # Handle both JSON and text responses
+                    # Check content type of response
+                    content_type = resp.headers.get('content-type', '')
+                    
+                    if 'application/pdf' in content_type:
+                        # Handle PDF response
+                        st.success("✅ Document generated successfully!")
+                        
+                        # Create download button for PDF
+                        st.download_button(
+                            label="Download PDF",
+                            data=resp.content,
+                            file_name=f"generated_document_{st.session_state.session_id}.pdf",
+                            mime="application/pdf"
+                        )
+                        
+                        # Set approved state
+                        st.session_state.approved = True
+                        return
+                        
+                    # Handle JSON/text responses as before
                     try:
                         data = resp.json()
                         data = data[0] if isinstance(data, list) else data
@@ -304,7 +323,7 @@ def agent2_mode():
                             'assistant': resp.text,
                             'generated_summary': resp.text,
                             'approved': True,
-                            'email': st.session_state.agent2_email  # Include email
+                            'email': st.session_state.agent2_email
                         }
                     
             except requests.exceptions.ReadTimeout:
@@ -323,23 +342,25 @@ def agent2_mode():
                 st.error(f"Error connecting to the server: {str(e)}")
                 return
 
-            # 3) Extract and render assistant reply
-            reply = data.get('assistant') or data.get('generated_summary') or data.get('textContent','')
-            reply = reply.strip()
-            st.session_state.messages.append({
-                'role': 'assistant',
-                'content': reply,
-                'email': data.get('email', st.session_state.agent2_email)  # Use email from response or session
-            })
-            with st.chat_message('assistant'):
-                st.markdown(reply)
+            # Only process text/JSON responses
+            if not st.session_state.approved:
+                # Extract and render assistant reply
+                reply = data.get('assistant') or data.get('generated_summary') or data.get('textContent','')
+                reply = reply.strip()
+                st.session_state.messages.append({
+                    'role': 'assistant',
+                    'content': reply,
+                    'email': data.get('email', st.session_state.agent2_email)
+                })
+                with st.chat_message('assistant'):
+                    st.markdown(reply)
 
-            # 4) Update brand_summary for the next turn
-            st.session_state.brand_summary = data.get('generated_summary', reply)
+                # Update brand_summary for the next turn
+                st.session_state.brand_summary = data.get('generated_summary', reply)
 
-            # 5) Check for approval flag
-            if data.get('approved'):
-                st.session_state.approved = True
+                # Check for approval flag
+                if data.get('approved'):
+                    st.session_state.approved = True
 
     # --- Final Summary on approval ---
     elif st.session_state.approved:
