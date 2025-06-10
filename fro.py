@@ -143,41 +143,78 @@ def icp_mode():
     # Email input field
     email = st.text_input('Enter your email address', placeholder='e.g., user@example.com')
 
-    # File uploader for PDF documents
-    upload = st.file_uploader('Upload a PDF (.pdf) file', type=['pdf'])
-    if upload:
-        # Display the uploaded file name
-        st.success(f"✅ File '{upload.name}' uploaded successfully!")
+    # File uploader for multiple PDFs and one TXT file
+    uploads = st.file_uploader(
+        'Upload files (Multiple PDFs and one TXT file allowed)', 
+        type=['pdf', 'txt'], 
+        accept_multiple_files=True
+    )
 
-        # Button to send the file to the n8n webhook
-        if st.button('Send to n8n Webhook'):
+    if uploads:
+        # Validate file types and count
+        pdf_files = [f for f in uploads if f.type == 'application/pdf']
+        txt_files = [f for f in uploads if f.type == 'text/plain']
+
+        # Display validation messages
+        st.write(f"📄 PDF files uploaded: {len(pdf_files)}")
+        st.write(f"📝 TXT files uploaded: {len(txt_files)}")
+
+        if len(txt_files) > 1:
+            st.warning('⚠️ Please upload only one TXT file.')
+            return
+
+        # Check total size limit (10 MB)
+        total_size = sum(f.size for f in uploads)
+        if total_size > 10 * 1024 * 1024:  # 10 MB limit
+            st.error("❌ The total size of uploaded files exceeds the 10 MB limit.")
+            return
+
+        # Button to send files to the n8n webhook
+        if st.button('Process Files'):
             if not email.strip():
                 st.warning('Please enter a valid email address.')
                 return
 
-            with st.spinner("Sending file to n8n webhook..."):
+            with st.spinner("Processing files..."):
                 try:
-                    # Determine the file type
-                    file_type = 'application/pdf' if upload.name.endswith('.pdf') else 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-
                     # Prepare the file payload
-                    files = {
-                        'file': (upload.name, upload.getvalue(), file_type)
-                    }
+                    files_payload = []
+                    for f in uploads:
+                        data = f.read()
+                        file_type = 'application/pdf' if f.name.endswith('.pdf') else 'text/plain'
+                        files_payload.append(('files', (f.name, data, file_type)))
+
+                    # Prepare additional data
                     data = {
-                        'email': email  # Include the email in the payload
+                        'email': email,
+                        'num_pdfs': len(pdf_files),
+                        'has_txt': len(txt_files) > 0
                     }
 
-                    # Send the file to the n8n webhook
-                    resp = requests.post(ICP_URL, files=files, data=data, timeout=30)
+                    # Send to n8n webhook
+                    resp = requests.post(ICP_URL, files=files_payload, data=data, timeout=60)
 
                     # Handle the response
                     if resp.ok:
-                        st.success("🎉 File sent to n8n webhook successfully!")
+                        st.success("✅ Files processed successfully!")
+                        
+                        # Check if response contains downloadable content
+                        content_type = resp.headers.get('content-type', '')
+                        if 'application/pdf' in content_type:
+                            st.download_button(
+                                label="Download Generated PDF",
+                                data=resp.content,
+                                file_name="icp_analysis.pdf",
+                                mime="application/pdf"
+                            )
                     else:
-                        st.error(f"❌ n8n webhook returned {resp.status_code}: {resp.text}")
+                        st.error(f"❌ Error: {resp.status_code} - {resp.text}")
+                except requests.exceptions.Timeout:
+                    st.error("❌ Request timed out. Please try again.")
+                except requests.exceptions.RequestException as e:
+                    st.error(f"❌ Error processing files: {str(e)}")
                 except Exception as e:
-                    st.error(f"❌ Error sending file to n8n webhook: {e}")
+                    st.error(f"❌ Unexpected error: {str(e)}")
 
 # -----------------------------
 # Agent 2: File Upload & Chat Assistant
