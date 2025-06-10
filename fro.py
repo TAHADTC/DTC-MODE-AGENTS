@@ -183,21 +183,29 @@ def icp_mode():
 # Agent 2: File Upload & Chat Assistant
 # -----------------------------
 def agent2_mode():
-    st.header('Agent 2 – File Submission & Chat Assistant')
+    st.header('Agent 2 – File Upload & Chat Assistant')
+
+    # Store email in session state if not already present
+    if 'agent2_email' not in st.session_state:
+        st.session_state.agent2_email = ''
+
+    # Email input field - persist the value in session state
+    email = st.text_input('Email', value=st.session_state.agent2_email)
+    if email != st.session_state.agent2_email:
+        st.session_state.agent2_email = email
 
     # --- File Upload & Initial Summary ---
     if not st.session_state.brand_summary:
         with st.form('upload_form', clear_on_submit=True):
             uploads = st.file_uploader(
-        'Upload files(BRAND DOCUMENT AS PDF AND MEETING NOTES AS TXT)', 
+                'Upload files(BRAND DOCUMENT AS PDF AND MEETING NOTES AS TXT)', 
                 type=['pdf','txt'],
                 accept_multiple_files=True
             )
-            email = st.text_input('Email')
             submitted = st.form_submit_button('Get Initial Summary')
 
         if submitted:
-            if not uploads or not email.strip():
+            if not uploads or not st.session_state.agent2_email.strip():
                 st.warning('Please upload files and enter email')
             else:
                 docs, files_payload = [], []
@@ -218,11 +226,11 @@ def agent2_mode():
 
                 st.session_state.document_texts = docs
 
-                # Call initial-summary webhook
+                # Call initial-summary webhook with email
                 resp = requests.post(
                     AGENT2_INIT_URL,
                     files=files_payload,
-                    data={'email': email},
+                    data={'email': st.session_state.agent2_email},
                     timeout=60
                 )
                 resp.raise_for_status()
@@ -233,7 +241,11 @@ def agent2_mode():
 
                 # Store and display
                 st.session_state.brand_summary = summary
-                st.session_state.messages.append({'role':'assistant','content': summary})
+                st.session_state.messages.append({
+                    'role': 'assistant',
+                    'content': summary,
+                    'email': st.session_state.agent2_email  # Include email in message
+                })
                 st.success('Initial summary generated!')
 
     # --- Display Initial Summary ---
@@ -253,29 +265,76 @@ def agent2_mode():
         user_input = st.chat_input('Your instruction...')
         if user_input:
             # 1) Show user message
-            st.session_state.messages.append({'role':'user','content':user_input})
+            st.session_state.messages.append({
+                'role': 'user',
+                'content': user_input,
+                'email': st.session_state.agent2_email  # Include email in message
+            })
             with st.chat_message('user'):
                 st.markdown(user_input)
 
-            # 2) Send to chatbot, including the latest summary
+            # 2) Send to chatbot, including the latest summary and email
             payload = {
-                'session_id':        st.session_state.session_id,
-                'documents':         st.session_state.document_texts,
+                'session_id': st.session_state.session_id,
+                'documents': st.session_state.document_texts,
                 'generated_summary': st.session_state.brand_summary,
-                'instruction':       user_input
+                'instruction': user_input,
+                'email': st.session_state.agent2_email
             }
-            resp = requests.post(AGENT2_CHAT_URL, json=payload, timeout=60)
-            resp.raise_for_status()
-            data = resp.json()[0] if isinstance(resp.json(), list) else resp.json()
+            
+            try:
+                with st.spinner("Waiting for response from the assistant..."):
+                    # Increased timeout to 180 seconds
+                    resp = requests.post(AGENT2_CHAT_URL, json=payload, timeout=180)
+                    
+                    if not resp.ok:
+                        st.error(f"Server returned error {resp.status_code}: {resp.text}")
+                        return
+                    
+                    # Handle both JSON and text responses
+                    try:
+                        data = resp.json()
+                        data = data[0] if isinstance(data, list) else data
+                        # Ensure email is preserved in the response data
+                        if 'email' not in data:
+                            data['email'] = st.session_state.agent2_email
+                    except requests.exceptions.JSONDecodeError:
+                        # If response is not JSON, create a data dict with the text response
+                        data = {
+                            'assistant': resp.text,
+                            'generated_summary': resp.text,
+                            'approved': True,
+                            'email': st.session_state.agent2_email  # Include email
+                        }
+                    
+            except requests.exceptions.ReadTimeout:
+                st.error("""
+                Request timed out after 180 seconds. This could be because:
+                1. The server is taking too long to process
+                2. There might be an issue with the webhook response configuration
+                
+                Please check your n8n workflow configuration:
+                - Ensure both webhook response nodes are properly configured
+                - Make sure each path (true/false) properly ends the request
+                - Consider optimizing any heavy processing
+                """)
+                return
+            except requests.exceptions.RequestException as e:
+                st.error(f"Error connecting to the server: {str(e)}")
+                return
 
             # 3) Extract and render assistant reply
             reply = data.get('assistant') or data.get('generated_summary') or data.get('textContent','')
             reply = reply.strip()
-            st.session_state.messages.append({'role':'assistant','content':reply})
+            st.session_state.messages.append({
+                'role': 'assistant',
+                'content': reply,
+                'email': data.get('email', st.session_state.agent2_email)  # Use email from response or session
+            })
             with st.chat_message('assistant'):
                 st.markdown(reply)
 
-            # 4) **Immediately** update brand_summary for the next turn
+            # 4) Update brand_summary for the next turn
             st.session_state.brand_summary = data.get('generated_summary', reply)
 
             # 5) Check for approval flag
