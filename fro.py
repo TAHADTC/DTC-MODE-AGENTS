@@ -143,9 +143,9 @@ def icp_mode():
     # Email input field
     email = st.text_input('Enter your email address', placeholder='e.g., user@example.com')
 
-    # File uploader for multiple PDFs and one TXT file
+    # File uploader for multiple PDFs and TXT files
     uploads = st.file_uploader(
-        'Upload files (Multiple PDFs and one TXT file allowed)', 
+        'Upload files (Multiple PDFs and up to 3 TXT files allowed)', 
         type=['pdf', 'txt'], 
         accept_multiple_files=True
     )
@@ -159,20 +159,20 @@ def icp_mode():
         st.write(f"📄 PDF files uploaded: {len(pdf_files)}")
         st.write(f"📝 TXT files uploaded: {len(txt_files)}")
 
-        if len(txt_files) > 1:
-            st.warning('⚠️ Please upload only one TXT file.')
+        if len(txt_files) > 3:
+            st.warning('⚠️ Please upload no more than 3 TXT files.')
             return
 
         # Check total size limit (10 MB)
         total_size = sum(f.size for f in uploads)
-        if total_size > 10 * 1024 * 1024:  # 10 MB limit
-            st.error("❌ The total size of uploaded files exceeds the 10 MB limit.")
+        if total_size > 10 * 1024 * 1024:
+            st.error("The total size of uploaded files exceeds the 10 MB limit.")
             return
 
-        # Button to send files to the n8n webhook
+        # Button to send files to webhook
         if st.button('Process Files'):
             if not email.strip():
-                st.warning('Please enter a valid email address.')
+                st.warning('Please enter your email address.')
                 return
 
             with st.spinner("Processing files..."):
@@ -181,40 +181,24 @@ def icp_mode():
                     files_payload = []
                     for f in uploads:
                         data = f.read()
-                        file_type = 'application/pdf' if f.name.endswith('.pdf') else 'text/plain'
+                        file_type = 'application/pdf' if f.type == 'application/pdf' else 'text/plain'
                         files_payload.append(('files', (f.name, data, file_type)))
 
                     # Prepare additional data
                     data = {
-                        'email': email,
-                        'num_pdfs': len(pdf_files),
-                        'has_txt': len(txt_files) > 0
+                        'email': email
                     }
 
-                    # Send to n8n webhook
-                    resp = requests.post(ICP_URL, files=files_payload, data=data, timeout=60)
+                    # Send the files to the webhook
+                    resp = requests.post(ICP_URL, files=files_payload, data=data, timeout=30)
 
                     # Handle the response
                     if resp.ok:
-                        st.success("✅ Files processed successfully!")
-                        
-                        # Check if response contains downloadable content
-                        content_type = resp.headers.get('content-type', '')
-                        if 'application/pdf' in content_type:
-                            st.download_button(
-                                label="Download Generated PDF",
-                                data=resp.content,
-                                file_name="icp_analysis.pdf",
-                                mime="application/pdf"
-                            )
+                        st.success("🎉 Files processed successfully!")
                     else:
                         st.error(f"❌ Error: {resp.status_code} - {resp.text}")
-                except requests.exceptions.Timeout:
-                    st.error("❌ Request timed out. Please try again.")
-                except requests.exceptions.RequestException as e:
-                    st.error(f"❌ Error processing files: {str(e)}")
                 except Exception as e:
-                    st.error(f"❌ Unexpected error: {str(e)}")
+                    st.error(f"❌ An error occurred: {e}")
 
 # -----------------------------
 # Agent 2: File Upload & Chat Assistant
