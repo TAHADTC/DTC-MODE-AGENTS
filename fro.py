@@ -55,12 +55,14 @@ CONVERSION_PATHWAY_WEBHOOK_URL = os.getenv('CONVERSION_PATHWAY_WEBHOOK_URL')
 RETENTION_AFFINITY_WEBHOOK_URL = os.getenv('RETENTION_AFFINITY_WEBHOOK_URL')
 STRATEGY_WEBHOOK_URL = os.getenv('STRATEGY_WEBHOOK_URL')
 MASTER_WEBHOOK_URL = os.getenv('MASTER_WEBHOOK_URL')
+PILARS_AGENTS_WEBHOOK_URL = os.getenv('PILARS_AGENTS_WEBHOOK_URL')
+PILARS_AGENTS_CHAT_URL = os.getenv('PILARS_AGENTS_CHAT_URL')
 
 # -----------------------------
 # Sidebar Navigation
 # -----------------------------
 st.sidebar.markdown('<div class="sidebar-header">🤖 DTCMODE BOT-ASSISTANT</div>', unsafe_allow_html=True)
-for tab in ['Miro Sticky Notes', "ICP's", 'Agent 2', 'Content Funnel Section', 'Conversion Pathway Strategy Framework', 'Retention + Affinity Generator', 'Strategy', 'Master']:
+for tab in ['Miro Sticky Notes', "ICP's", 'Agent 2', 'Content Funnel Section', 'Conversion Pathway Strategy Framework', 'Retention + Affinity Generator', 'Strategy', 'Master', 'Pilars agents']:
     if st.sidebar.button(tab):
         st.session_state.active_tab = tab
 
@@ -602,51 +604,219 @@ def strategy_mode():
                 st.error(f"❌ Error sending files to n8n webhook: {e}")
 
 # -----------------------------
-# Master Page
+# Pilars Agents
 # -----------------------------
-def master_mode():
-    st.header("Master File Upload")
+def pilars_agents_mode():
+    st.header('Pilars Agents – File Upload & Chat Assistant')
 
-    # Email input field
-    email = st.text_input('Enter your email address', placeholder='e.g., user@example.com')
+    # Store email in session state if not already present
+    if 'pilars_email' not in st.session_state:
+        st.session_state.pilars_email = ''
 
-    # File uploader for PDF and TXT documents
-    uploads = st.file_uploader(
-        'Upload files (PDF and TXT only)', 
-        type=['pdf', 'txt'], 
-        accept_multiple_files=True
-    )
+    # Email input field - persist the value in session state
+    email = st.text_input('Email', value=st.session_state.pilars_email)
+    if email != st.session_state.pilars_email:
+        st.session_state.pilars_email = email
 
-    # Button to send the files to the n8n webhook
-    if st.button('Send to n8n Webhook'):
-        if not uploads or not email.strip():
-            st.warning('Please upload files and enter a valid email address.')
-            return
+    # --- File Upload & Initial Processing ---
+    if not st.session_state.brand_summary:
+        with st.form('upload_form', clear_on_submit=True):
+            # File uploaders - separate for PDF and TXT
+            pdf_uploads = st.file_uploader(
+                'Upload PDF files', 
+                type=['pdf'], 
+                accept_multiple_files=True,
+                key='pdf_uploader'
+            )
 
-        with st.spinner("Sending files to n8n webhook..."):
+            txt_uploads = st.file_uploader(
+                'Upload TXT files (maximum 3)', 
+                type=['txt'], 
+                accept_multiple_files=True,
+                key='txt_uploader'
+            )
+
+            submitted = st.form_submit_button('Process Files')
+
+        if submitted:
+            # Validate inputs
+            if len(txt_uploads) > 3:
+                st.error('❌ Maximum of 3 TXT files allowed. Please remove some files.')
+                return
+
+            if not (pdf_uploads or txt_uploads) or not st.session_state.pilars_email.strip():
+                st.warning('Please upload at least one file and enter your email address')
+                return
+
+            # Check total size limit (10 MB)
+            total_size = sum(f.size for f in (pdf_uploads + txt_uploads))
+            if total_size > 10 * 1024 * 1024:
+                st.error("The total size of uploaded files exceeds the 10 MB limit.")
+                return
+
+            docs, files_payload = [], []
+            # Process PDF files
+            for f in pdf_uploads:
+                data = f.read()
+                txt = '\n'.join(p.extract_text() or '' for p in PdfReader(io.BytesIO(data)).pages)
+                docs.append(txt)
+                files_payload.append(('files', (f.name, data, 'application/pdf')))
+
+            # Process TXT files
+            for f in txt_uploads:
+                data = f.read()
+                txt = data.decode(errors='ignore')
+                docs.append(txt)
+                files_payload.append(('files', (f.name, data, 'text/plain')))
+
+            st.session_state.document_texts = docs
+
+            # Call initial webhook with files and email
             try:
-                # Prepare the file payload
-                files_payload = []
-                for f in uploads:
-                    data = f.read()
-                    file_type = 'application/pdf' if f.name.endswith('.pdf') else 'text/plain'
-                    files_payload.append(('files', (f.name, data, file_type)))
+                resp = requests.post(
+                    PILARS_AGENTS_WEBHOOK_URL,
+                    files=files_payload,
+                    data={
+                        'email': st.session_state.pilars_email,
+                        'pdf_count': len(pdf_uploads),
+                        'txt_count': len(txt_uploads)
+                    },
+                    timeout=60
+                )
+                resp.raise_for_status()
+                result_json = resp.json()
+                payload = result_json[0] if isinstance(result_json, list) else result_json
+                summary = payload.get('summary') or payload.get('assistant') or payload.get('textContent','')
+                summary = summary.strip()
 
-                # Prepare additional data
-                data = {
-                    'email': email  # Include the email in the payload
-                }
-
-                # Send the files to the n8n webhook
-                resp = requests.post(MASTER_WEBHOOK_URL, files=files_payload, data=data, timeout=30)
-
-                # Handle the response
-                if resp.ok:
-                    st.success("🎉 Files sent to n8n webhook successfully!")
-                else:
-                    st.error(f"❌ n8n webhook returned {resp.status_code}: {resp.text}")
+                # Store and display
+                st.session_state.brand_summary = summary
+                st.session_state.messages.append({
+                    'role': 'assistant',
+                    'content': summary,
+                    'email': st.session_state.pilars_email
+                })
+                st.success('Initial processing complete!')
             except Exception as e:
-                st.error(f"❌ Error sending files to n8n webhook: {e}")
+                st.error(f"❌ Error processing files: {e}")
+                return
+
+    # --- Display Initial Summary ---
+    if st.session_state.brand_summary:
+        st.subheader('Initial Generated Summary')
+        st.write(st.session_state.brand_summary)
+
+    # --- Chat Interface ---
+    st.markdown('---')
+    st.subheader('Chat')
+    for msg in st.session_state.messages:
+        with st.chat_message(msg['role']):
+            st.markdown(msg['content'])
+
+    # --- Chat Input & Response ---
+    if st.session_state.brand_summary and not st.session_state.approved:
+        user_input = st.chat_input('Your instruction...')
+        if user_input:
+            # Show user message
+            st.session_state.messages.append({
+                'role': 'user',
+                'content': user_input,
+                'email': st.session_state.pilars_email
+            })
+            with st.chat_message('user'):
+                st.markdown(user_input)
+
+            # Send to chatbot
+            payload = {
+                'session_id': st.session_state.session_id,
+                'documents': st.session_state.document_texts,
+                'generated_summary': st.session_state.brand_summary,
+                'instruction': user_input,
+                'email': st.session_state.pilars_email
+            }
+            
+            try:
+                with st.spinner("Waiting for response from the assistant..."):
+                    resp = requests.post(PILARS_AGENTS_CHAT_URL, json=payload, timeout=180)
+                    
+                    if not resp.ok:
+                        st.error(f"Server returned error {resp.status_code}: {resp.text}")
+                        return
+                    
+                    # Check content type of response
+                    content_type = resp.headers.get('content-type', '')
+                    
+                    if 'application/pdf' in content_type:
+                        # Handle PDF response
+                        st.success("✅ Document generated successfully!")
+                        
+                        # Create download button for PDF
+                        st.download_button(
+                            label="Download PDF",
+                            data=resp.content,
+                            file_name=f"pilars_document_{st.session_state.session_id}.pdf",
+                            mime="application/pdf"
+                        )
+                        
+                        # Set approved state
+                        st.session_state.approved = True
+                        return
+                        
+                    # Handle JSON/text responses
+                    try:
+                        data = resp.json()
+                        data = data[0] if isinstance(data, list) else data
+                        if 'email' not in data:
+                            data['email'] = st.session_state.pilars_email
+                    except requests.exceptions.JSONDecodeError:
+                        data = {
+                            'assistant': resp.text,
+                            'generated_summary': resp.text,
+                            'approved': True,
+                            'email': st.session_state.pilars_email
+                        }
+                    
+            except requests.exceptions.ReadTimeout:
+                st.error("""
+                Request timed out after 180 seconds. This could be because:
+                1. The server is taking too long to process
+                2. There might be an issue with the webhook response configuration
+                
+                Please check your n8n workflow configuration:
+                - Ensure both webhook response nodes are properly configured
+                - Make sure each path (true/false) properly ends the request
+                - Consider optimizing any heavy processing
+                """)
+                return
+            except requests.exceptions.RequestException as e:
+                st.error(f"Error connecting to the server: {str(e)}")
+                return
+
+            # Only process text/JSON responses
+            if not st.session_state.approved:
+                # Extract and render assistant reply
+                reply = data.get('assistant') or data.get('generated_summary') or data.get('textContent','')
+                reply = reply.strip()
+                st.session_state.messages.append({
+                    'role': 'assistant',
+                    'content': reply,
+                    'email': data.get('email', st.session_state.pilars_email)
+                })
+                with st.chat_message('assistant'):
+                    st.markdown(reply)
+
+                # Update brand_summary for the next turn
+                st.session_state.brand_summary = data.get('generated_summary', reply)
+
+                # Check for approval flag
+                if data.get('approved'):
+                    st.session_state.approved = True
+
+    # --- Final Summary on approval ---
+    elif st.session_state.approved:
+        st.success('✅ Conversation approved!')
+        st.markdown(f"""### Final Summary
+{st.session_state.brand_summary}""")
 
 # -----------------------------
 # Main Dispatcher
@@ -665,5 +835,7 @@ elif st.session_state.active_tab == "Strategy":
     strategy_mode()
 elif st.session_state.active_tab == "Master":
     master_mode()
+elif st.session_state.active_tab == "Pilars agents":
+    pilars_agents_mode()
 else:
     agent2_mode()
